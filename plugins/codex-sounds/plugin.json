@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "codex-sounds",
+  "version": "0.1.0",
+  "description": "Custom sounds for Codex completion and input prompts",
+  "author": {
+    "name": "Maksym Kryvosheia"
+  },
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "Codex Sounds",
+        "shortDescription": "Hear when Codex finishes or needs input.",
+        "longDescription": "Plays locally configured WAV sounds for supported Codex lifecycle events.",
+        "developerName": "Maksym Kryvosheia",
+        "category": "Productivity",
+        "capabilities": [],
+        "defaultPrompt": "Help me configure Codex Sounds."
+      }
+    }
+  }
+}

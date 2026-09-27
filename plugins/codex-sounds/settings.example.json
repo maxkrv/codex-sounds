@@ -1,0 +1,5 @@
+{
+  "_help": "Put WAV files in completion/ and question/ beside this settings file. A sound path below overrides its folder.",
+  "completion_sound": null,
+  "input_sound": null
+}

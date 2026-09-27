@@ -1,0 +1,45 @@
+{
+  "description": "Play local sounds for Codex turn completion and input prompts.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/play_sound.py\" --hook",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\play_sound.py\" --hook",
+            "async": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/play_sound.py\" --hook",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\play_sound.py\" --hook",
+            "async": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(request_user_input|request_user_input_async)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/play_sound.py\" --hook",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\play_sound.py\" --hook",
+            "async": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
