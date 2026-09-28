@@ -11,6 +11,18 @@ A local Codex plugin that plays a random completion sound when a turn finishes a
 
 ## Install or update
 
+### Install with a coding agent
+
+Open a Codex chat or another coding agent **on the computer where you use Codex**, then paste this prompt:
+
+```text
+Set up Codex Sounds on this computer from https://github.com/maxkrv/codex-notification. Clone the repository (or reuse my existing checkout without discarding changes), read AGENT_SETUP.md and README.md, and follow the agent workflow in AGENT_SETUP.md. Check my OS and prerequisites, inspect scripts/install.py before running it, install the plugin, verify the installation and sound previews, and help me review and trust its hooks in a new Codex CLI chat. Use the --user-hooks fallback only if the bundled hooks are absent. Tell me what succeeded and any step I still need to do. Do not treat an install in a remote environment as an install on my computer.
+```
+
+The full agent checklist is in [AGENT_SETUP.md](AGENT_SETUP.md). Hook trust requires your review in `/hooks` before Codex will run the sounds.
+
+### Install manually
+
 From this repository, run:
 
 ```sh
