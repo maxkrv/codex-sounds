@@ -1,6 +1,6 @@
 # Codex Sounds
 
-A local Codex plugin that plays a random completion sound when a turn finishes and a random question sound when Codex requests input through a supported hook. Sounds are short WAV files.
+A local Codex plugin that plays a random completion sound when a turn finishes and a random question sound when Codex requests input through a supported hook. Get notified when a Codex task is complete or when Codex needs your input.
 
 ## Requirements
 
