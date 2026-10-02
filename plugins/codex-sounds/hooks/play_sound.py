@@ -10,6 +10,7 @@ from pathlib import Path
 import platform
 import random
 import shutil
+import sqlite3
 import subprocess
 import sys
 from typing import Any
@@ -63,7 +64,7 @@ def read_settings(path: Path) -> dict[str, Any]:
 
 
 def sound_path(kind: str, settings: dict[str, Any], root: Path = PLUGIN_ROOT,
-               settings_path: Path | None = None) -> Path:
+               settings_path: Path | None = None, exclude: Path | None = None) -> Path:
     default = root / "assets" / SOUND_NAMES[kind]
     configured = settings.get(SETTING_NAMES[kind])
     if configured is not None and configured != "":
@@ -83,6 +84,8 @@ def sound_path(kind: str, settings: dict[str, Any], root: Path = PLUGIN_ROOT,
     except OSError as exc:
         print(f"Codex Sounds: cannot read {folder}: {exc}; using default", file=sys.stderr)
         choices = []
+    if len(choices) > 1 and exclude in choices:
+        choices.remove(exclude)
     return random.choice(choices) if choices else default
 
 
@@ -112,6 +115,48 @@ def play(path: Path, system: str | None = None) -> None:
                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
+def play_choice(path: Path) -> bool:
+    try:
+        play(path)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"Codex Sounds: could not play {path}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def play_with_history(kind: str, settings: dict[str, Any], settings_path: Path) -> bool:
+    """Serialize selection and playback, remembering only successful plays."""
+    database = None
+    played = False
+    try:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        database = sqlite3.connect(settings_path.with_name("history.sqlite3"), timeout=25)
+        database.execute("BEGIN IMMEDIATE")
+        database.execute("CREATE TABLE IF NOT EXISTS last_played "
+                         "(kind TEXT PRIMARY KEY, path TEXT NOT NULL)")
+        row = database.execute("SELECT path FROM last_played WHERE kind = ?", (kind,)).fetchone()
+        exclude = Path(row[0]) if row else None
+        selected = sound_path(kind, settings, settings_path=settings_path, exclude=exclude)
+        if not play_choice(selected):
+            database.rollback()
+            return False
+        played = True
+        database.execute("INSERT INTO last_played (kind, path) VALUES (?, ?) "
+                         "ON CONFLICT(kind) DO UPDATE SET path = excluded.path", (kind, str(selected)))
+        database.commit()
+        return True
+    except (sqlite3.Error, OSError) as exc:
+        if played:
+            print(f"Codex Sounds: could not save sound history: {exc}", file=sys.stderr)
+            return True
+        print(f"Codex Sounds: cannot use sound history: {exc}; using random selection",
+              file=sys.stderr)
+        return play_choice(sound_path(kind, settings, settings_path=settings_path))
+    finally:
+        if database is not None:
+            database.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     choice = parser.add_mutually_exclusive_group(required=True)
@@ -134,13 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         kind = args.preview
     settings_path = config_path()
-    selected = sound_path(kind, read_settings(settings_path), settings_path=settings_path)
-    try:
-        play(selected)
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        print(f"Codex Sounds: could not play {selected}: {exc}", file=sys.stderr)
-        return 0 if args.hook else 1
-    return 0
+    succeeded = play_with_history(kind, read_settings(settings_path), settings_path)
+    return 0 if succeeded or args.hook else 1
 
 
 if __name__ == "__main__":

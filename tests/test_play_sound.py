@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import closing
 import importlib.util
 import io
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -121,6 +124,157 @@ class SettingsTests(unittest.TestCase):
             file.write_text("not json", encoding="utf-8")
             with mock.patch("sys.stderr", new_callable=io.StringIO):
                 self.assertEqual(sound.read_settings(file), {})
+
+
+class HistoryTests(unittest.TestCase):
+    def make_pool(self, base, folder, names):
+        pool = base / folder
+        pool.mkdir()
+        paths = [pool / name for name in names]
+        for path in paths:
+            path.write_bytes(b"sound")
+        return paths
+
+    def test_last_successful_choice_persists_without_forcing_a_full_cycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, second, _ = self.make_pool(base, "completion", ["a.wav", "b.wav", "c.wav"])
+            settings_path = base / "settings.json"
+            with mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play") as play:
+                for _ in range(3):
+                    self.assertTrue(sound.play_with_history("completion", {}, settings_path))
+            self.assertEqual([call.args[0] for call in play.call_args_list], [first, second, first])
+            with closing(sqlite3.connect(base / "history.sqlite3")) as database:
+                self.assertEqual(database.execute("SELECT path FROM last_played WHERE kind = 'completion'").fetchone(),
+                                 (str(first),))
+
+    def test_completion_and_input_have_independent_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            completion = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            question = self.make_pool(base, "question", ["a.wav", "b.wav"])
+            with mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play") as play:
+                for kind in ("completion", "input", "completion", "input"):
+                    self.assertTrue(sound.play_with_history(kind, {}, base / "settings.json"))
+            self.assertEqual([call.args[0] for call in play.call_args_list],
+                             [completion[0], question[0], completion[1], question[1]])
+
+    def test_previews_share_history_with_hooks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, second = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            with mock.patch.object(sound, "config_path", return_value=base / "settings.json"), \
+                 mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play") as play:
+                self.assertEqual(sound.main(["--preview", "completion"]), 0)
+                self.assertTrue(sound.play_with_history("completion", {}, base / "settings.json"))
+            self.assertEqual([call.args[0] for call in play.call_args_list], [first, second])
+
+    def test_failed_playback_does_not_update_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, _ = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            with mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play", side_effect=[RuntimeError("bad audio"), None]) as play, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO):
+                self.assertFalse(sound.play_with_history("completion", {}, base / "settings.json"))
+                self.assertTrue(sound.play_with_history("completion", {}, base / "settings.json"))
+            self.assertEqual([call.args[0] for call in play.call_args_list], [first, first])
+
+    def test_single_file_repeats_and_override_is_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, second = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            settings_path = base / "settings.json"
+            with mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play") as play:
+                for _ in range(2):
+                    self.assertTrue(sound.play_with_history("completion", {"completion_sound": str(first)},
+                                                            settings_path))
+                self.assertTrue(sound.play_with_history("completion", {}, settings_path))
+            self.assertEqual([call.args[0] for call in play.call_args_list], [first, first, second])
+
+            single, = self.make_pool(base, "question", ["only.wav"])
+            with mock.patch.object(sound, "play") as play:
+                for _ in range(2):
+                    self.assertTrue(sound.play_with_history("input", {}, settings_path))
+            self.assertEqual([call.args[0] for call in play.call_args_list], [single, single])
+
+    def test_unavailable_history_falls_back_to_random_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, _ = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            with mock.patch.object(sound.sqlite3, "connect", side_effect=sqlite3.OperationalError("unavailable")), \
+                 mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play") as play, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertTrue(sound.play_with_history("completion", {}, base / "settings.json"))
+            play.assert_called_once_with(first)
+            self.assertIn("cannot use sound history", stderr.getvalue())
+
+    def test_history_write_failure_does_not_play_twice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, _ = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            with closing(sqlite3.connect(base / "history.sqlite3")) as database:
+                database.execute("CREATE TABLE last_played (kind TEXT PRIMARY KEY, path TEXT NOT NULL)")
+                database.execute("CREATE TRIGGER reject_history BEFORE INSERT ON last_played "
+                                 "BEGIN SELECT RAISE(FAIL, 'history is unavailable'); END")
+                database.commit()
+            with mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play") as play, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertTrue(sound.play_with_history("completion", {}, base / "settings.json"))
+            play.assert_called_once_with(first)
+            self.assertIn("could not save sound history", stderr.getvalue())
+
+    def test_overlapping_hooks_wait_for_successful_playback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            first, second = self.make_pool(base, "completion", ["a.wav", "b.wav"])
+            started = threading.Event()
+            release = threading.Event()
+            second_play = threading.Event()
+            calls = []
+            results = []
+            errors = []
+
+            def fake_play(path):
+                calls.append(path)
+                if len(calls) == 1:
+                    started.set()
+                    if not release.wait(5):
+                        raise RuntimeError("test timed out")
+                else:
+                    second_play.set()
+
+            def run():
+                try:
+                    results.append(sound.play_with_history("completion", {}, base / "settings.json"))
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with mock.patch.object(sound.random, "choice", side_effect=lambda files: files[0]), \
+                 mock.patch.object(sound, "play", side_effect=fake_play):
+                first_thread = threading.Thread(target=run)
+                second_thread = threading.Thread(target=run)
+                first_thread.start()
+                try:
+                    self.assertTrue(started.wait(5))
+                    second_thread.start()
+                    self.assertFalse(second_play.wait(0.1))
+                finally:
+                    release.set()
+                    first_thread.join(5)
+                    if second_thread.ident is not None:
+                        second_thread.join(5)
+            self.assertFalse(first_thread.is_alive())
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(results, [True, True])
+            self.assertEqual(calls, [first, second])
 
 
 class PlaybackTests(unittest.TestCase):

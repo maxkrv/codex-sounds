@@ -43,11 +43,11 @@ Find your settings file with:
 python3 plugins/codex-sounds/hooks/play_sound.py --config-path
 ```
 
-Put WAV files directly in `completion/` and `question/` beside the settings file. For example, on macOS these folders are `~/Library/Application Support/Codex Sounds/completion/` and `~/Library/Application Support/Codex Sounds/question/`. Each event picks a WAV at random from its folder; the same file may play twice in a row. Non-WAV files and nested folders are ignored. An empty folder uses the bundled sound.
+Put WAV files directly in `completion/` and `question/` beside the settings file. For example, on macOS these folders are `~/Library/Application Support/Codex Sounds/completion/` and `~/Library/Application Support/Codex Sounds/question/`. Each event picks a WAV at random from its folder, excluding the last successfully played file for that event type when another choice exists. The history is saved in `history.sqlite3` beside the settings file, so it survives Codex sessions and restarts. Non-WAV files and nested folders are ignored. A folder with one WAV replays it; an empty folder uses the bundled sound.
 
 The installer creates both folders. When updating an existing installation, it copies a valid custom WAV from each single-file setting into the corresponding folder and clears that setting. It leaves the original files in place and does not add duplicate copies on later updates.
 
-To use one specific sound instead, edit either setting below. A valid single-file path overrides its folder. Paths must be absolute; `~` is also accepted. `null` enables random folder selection.
+To use one specific sound instead, edit either setting below. A valid single-file path overrides its folder and always plays, even on consecutive invocations. Successful override playback is still recorded in the history. Paths must be absolute; `~` is also accepted. `null` enables random folder selection.
 
 ```json
 {
@@ -56,14 +56,14 @@ To use one specific sound instead, edit either setting below. A valid single-fil
 }
 ```
 
-Preview a random choice from each folder with:
+Preview a random choice from each folder with the same repeat avoidance and history as hook playback:
 
 ```sh
 python3 plugins/codex-sounds/hooks/play_sound.py --preview completion
 python3 plugins/codex-sounds/hooks/play_sound.py --preview input
 ```
 
-Invalid single-file settings fall back to the folder. Empty or unreadable folders use the bundled WAVs. Unreadable settings are ignored, so folder selection still works. If an audio player is unavailable, the hook reports the problem but does not block Codex.
+Invalid single-file settings fall back to the folder. Empty or unreadable folders use the bundled WAVs. Unreadable settings are ignored, so folder selection still works. If history storage is unavailable, playback falls back to ordinary random selection. Failed playback does not update history. If an audio player is unavailable, the hook reports the problem but does not block Codex.
 
 ## Event coverage
 
